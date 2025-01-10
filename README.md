@@ -33,12 +33,23 @@ yarn test
 # To run tests, watching for changes.
 yarn test --watch
 ```
-
 ### [WIP] Thinking Process
 
-Problems encountered during the implementation: 
-1. One Buffer
-2. Max heap
-4. Infinite Loop
-5. ShouldGoRight
-6. Debbuging
+Mantra: 1st make it work, 2nd make it right, 3rd make it fast.
+
+1st Attempt: Create one big buffer to store the entire tree and use array indexes for fast navigation. Problem: The tree was too large to fit in memory. Additionally, I realized I could only modify specific parts of the code and understood the necessity of using the DB.
+
+2nd Attempt: Use the configured DB and perform operations recursively. Problem: While specific changes were efficient (log2n), tree initialization caused max heap errors. I realized that since the root was deterministic, the entire tree was deterministic and could be built sequentially.
+
+3rd Attempt: Initialize the tree sequentially by calculating only necessary parts. For updates and path calculations, I kept recursion. The tests passed successfully.
+
+Other Problems I Encountered:
+- Infinite Loop: A bug in the update logic caused incorrect child settings, leading to infinite loops due to repeated values. Debugging this was challenging.
+- ShouldGoRight: Determining the correct path at each level was difficult. I found a formula online that worked, which involved traversing the tree from root to leaf and checking if the bit was 1 or 0.
+- Debugging: For multiple bugs, it was faster to create temporary functions to print the tree and paths for debugging. These functions were removed after tests passed for cleaner code.
+
+Future Work:
+- Add extensive tests. Multiple internal functions with logic need unit testing.
+- Reorganize the files: Separate the DB, tree, utilities, and tests into different files.
+
+Author: x.com/mgrabina
