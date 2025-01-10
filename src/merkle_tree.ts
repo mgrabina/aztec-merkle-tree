@@ -28,7 +28,43 @@ export class MerkleTree {
       throw Error('Bad depth');
     }
 
-    // Implement.
+    if (root) {
+      // Restore already saved tree state.
+      root.copy(this.root);
+    } else {
+      // Since initialization with zeros is deterministic, we do it sequentially for enhanced performance.
+      const hashPerLevel: Buffer[] = [];
+      for (let i = depth; i >= 0; i--) {
+        // Get deterministic hash for current level
+        if (this.depth === i) {
+          // Leaf nodes are initialized with zeros and hash is calculated from it.
+          const buffer = Buffer.alloc(64, 0);
+          const hash = this.hasher.hash(buffer);
+          hashPerLevel[i] = hash;
+        } else {
+          // For internal nodes, hash is calculated from children.
+          if (!hashPerLevel[i + 1]) {
+            throw new Error("Hash not found for level " + (i + 1));
+          }
+
+          const childHash = hashPerLevel[i + 1];
+          const combinedHash = this.hasher.compress(
+            childHash, // left
+            childHash // right
+          );
+          hashPerLevel[i] = combinedHash;
+
+          const levelBuffer = Buffer.alloc(64);
+          childHash.copy(levelBuffer, 0);
+          childHash.copy(levelBuffer, 32);
+
+          // Save nodes, just one instance per level needed.
+          this.db.put(combinedHash, levelBuffer);
+        }
+      }
+
+      hashPerLevel[0].copy(this.root); // Copy the new root hash.
+    }
   }
 
   /**
@@ -72,15 +108,72 @@ export class MerkleTree {
    *     d3:   [ ]         [ ]          [*]         [*]           [ ]         [ ]          [ ]        [ ]
    */
   async getHashPath(index: number) {
-    // Implement.
-    return new HashPath();
+    const getHashPathRecursively = async (
+      current: Buffer,
+      depth: number
+    ): Promise<Buffer[][]> => {
+      // DB values are stored as [left, right] pairs asigned to the parent hash.
+      const fromDb: Buffer = await this.db.get(current);
+      const leftHash = fromDb.slice(0, 32);
+      const rightHash = fromDb.slice(32, 64);
+
+      if (this.depth === depth + 1) {
+        // If next level is leaf, we add both children to the beginning of the path and return.
+        return [[leftHash, rightHash]];
+      }
+
+      const shouldGoRight = (index >> (this.depth - depth - 1)) & 1; // 1 if right, 0 if left. This works because we are traversing the tree from the root to the leaf.
+      const accPath = await getHashPathRecursively(
+        shouldGoRight ? rightHash : leftHash,
+        depth + 1
+      );
+
+      accPath.push([leftHash, rightHash]);
+
+      return accPath;
+    };
+
+    return new HashPath(await getHashPathRecursively(this.root, 0));
   }
 
   /**
    * Updates the tree with `value` at `index`. Returns the new tree root.
    */
   async updateElement(index: number, value: Buffer) {
-    // Implement.
+    const updateRecursively = async (
+      current: Buffer,
+      depth: number
+    ): Promise<Buffer> => {
+      if (this.depth === depth) {
+        // Leaf node, hash the value and return.
+        return this.hasher.hash(value);
+      }
+
+      const fromDb: Buffer = await this.db.get(current);
+      const shouldGoRight = (index >> (this.depth - depth - 1)) & 1; // 1 if right, 0 if left. This works because we are traversing the tree from the root to the leaf.
+
+      const leftHash = shouldGoRight
+        ? fromDb.slice(0, 32)
+        : await updateRecursively(fromDb.slice(0, 32), depth + 1);
+      const rightHash = shouldGoRight
+        ? await updateRecursively(fromDb.slice(32, 64), depth + 1)
+        : fromDb.slice(32, 64);
+
+      // Save new internal node. Hash of children is calculated and saved.
+      const newHash = this.hasher.compress(leftHash, rightHash);
+      const newChildrenBuffer = Buffer.alloc(64);
+      leftHash.copy(newChildrenBuffer, 0);
+      rightHash.copy(newChildrenBuffer, 32);
+      this.db.put(newHash, newChildrenBuffer);
+
+
+      return newHash;
+    };
+
+    (await updateRecursively(this.root, 0)).copy(this.root); // Update the root.
+
+    await this.writeMetaData(); // Persist the new root for future restores.
+
     return this.root;
   }
 }
